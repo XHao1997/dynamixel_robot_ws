@@ -1,0 +1,27 @@
+dynamixel_sdk_examples:
+  device_name:
+    type: string
+    default_value: "/dev/ttyUSB0"
+    description: "Device name for the motor communication"
+  baudrate:
+    type: int
+    default_value: 1000000
+    description: "Baudrate for the motor communication"
+    validation:
+      bounds<>: [0, 1000000]
+  ids:
+    type: int_array
+    default_value: [1, 2]
+    description: "List of motor IDs to communicate with"
+  joint_names:
+    type: string_array
+    default_value: ["joint_1", "joint_2"]
+    description: "List of joint names corresponding to the motors"
+  # motor1:
+  #   id:
+  #     type: int
+  #     default_value: 1
+  #     description: "Motor ID"
+  #     validation:
+  #       bounds<>: [1, 10]
+    
