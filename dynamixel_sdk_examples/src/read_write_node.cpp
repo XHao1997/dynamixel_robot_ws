@@ -17,7 +17,7 @@ ReadWriteNodeAX12A::ReadWriteNodeAX12A()
   dxl_ids_     = std::vector<uint8_t>(cfg.ids.begin(), cfg.ids.end());
   joint_names_ = cfg.joint_names;
 
-  poll_rate_hz_ = this->declare_parameter<double>("poll_rate_hz", 1.0);
+  poll_rate_hz_ = this->declare_parameter<double>("poll_rate_hz", 2);
   const int qos_depth = this->declare_parameter<int>("qos_depth", 1);
 
   RCLCPP_INFO(this->get_logger(), "Device: %s  Baud: %d", device_name_.c_str(), baudrate_);
@@ -70,6 +70,11 @@ ReadWriteNodeAX12A::ReadWriteNodeAX12A()
   set_multi_position_sub_ = this->create_subscription<SetMultiPosition>(
     "set_multi_position", qos,
     [this](const SetMultiPosition::SharedPtr msg) { this->onSetMultiPosition(msg); }
+  );
+  
+  moveJ_sub_ = this->create_subscription<MoveJoint>(
+    "move_joint", qos,
+    [this](const MoveJoint::SharedPtr msg) { this->moveJ(msg); }
   );
 
   // ---- Polling timer
@@ -150,14 +155,17 @@ void ReadWriteNodeAX12A::onSetMultiPosition(const SetMultiPosition::SharedPtr ms
                 dxl_ids_.size(), goal_positions_.size());
     return;
   }
-
+  if (dxl_ids_.empty() || goal_positions_.empty()) {
+    RCLCPP_WARN(this->get_logger(), "Empty id array in SetMultiPosition");
+    return;
+  }
   for (size_t i = 0; i < dxl_ids_.size(); ++i) {
     uint8_t id = static_cast<uint8_t>(dxl_ids_[i]);
     int pos = static_cast<int>(goal_positions_[i]);
     pos = std::clamp<int>(pos, 0, 1023);  
 
     if(id==3 || id==5) {
-      pos = 1023 - pos;
+      pos = 1023 - static_cast<int>(goal_positions_[id-1]);
     }
     else
     {pos = pos;}
@@ -246,6 +254,9 @@ void ReadWriteNodeAX12A::pollAndPublishJointState() {
 }
 
 
+void ReadWriteNodeAX12A::moveJ(const MoveJoint::SharedPtr msg){
+
+}
 
 static volatile std::sig_atomic_t g_stop = 0;
 void sigintHandler(int) { g_stop = 1; }
@@ -268,3 +279,4 @@ int main(int argc, char* argv[]) {
   rclcpp::shutdown();
   return 0;
 }
+

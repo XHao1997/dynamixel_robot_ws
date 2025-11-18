@@ -13,6 +13,8 @@
 #include "dynamixel_sdk/dynamixel_sdk.h"
 #include "dynamixel_sdk_custom_interfaces/msg/set_position.hpp"
 #include "dynamixel_sdk_custom_interfaces/msg/set_multi_position.hpp"
+#include "dynamixel_sdk_custom_interfaces/msg/move_joint.hpp"
+
 
 #include "dynamixel_sdk_examples/motors_parameters.hpp"   // ParamListener + params
 
@@ -20,6 +22,8 @@ class ReadWriteNodeAX12A : public rclcpp::Node {
 public:
   using SetPosition = dynamixel_sdk_custom_interfaces::msg::SetPosition;
   using SetMultiPosition = dynamixel_sdk_custom_interfaces::msg::SetMultiPosition;
+  using MoveJoint = dynamixel_sdk_custom_interfaces::msg::MoveJoint;
+
   using milliseconds = std::chrono::milliseconds;
 
   explicit ReadWriteNodeAX12A();
@@ -45,7 +49,7 @@ private:
   void pollAndPublishJointState();
   // ---- Dynamixel helpers
   bool enableTorque(uint8_t id, bool enable);
-
+  void moveJ(const MoveJoint::SharedPtr msg);
   // ---- Parameters / configuration
   std::string device_name_;
   int baudrate_{57600};
@@ -57,6 +61,8 @@ private:
   // ---- ROS I/O
   rclcpp::Subscription<SetPosition>::SharedPtr set_position_sub_;
   rclcpp::Subscription<SetMultiPosition>::SharedPtr set_multi_position_sub_;
+  rclcpp::Subscription<MoveJoint>::SharedPtr moveJ_sub_;
+
 
 
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_pub_;
