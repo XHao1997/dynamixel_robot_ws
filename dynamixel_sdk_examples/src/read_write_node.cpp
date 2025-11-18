@@ -17,7 +17,7 @@ ReadWriteNodeAX12A::ReadWriteNodeAX12A()
   dxl_ids_     = std::vector<uint8_t>(cfg.ids.begin(), cfg.ids.end());
   joint_names_ = cfg.joint_names;
 
-  poll_rate_hz_ = this->declare_parameter<double>("poll_rate_hz", 20.0);
+  poll_rate_hz_ = this->declare_parameter<double>("poll_rate_hz", 1.0);
   const int qos_depth = this->declare_parameter<int>("qos_depth", 1);
 
   RCLCPP_INFO(this->get_logger(), "Device: %s  Baud: %d", device_name_.c_str(), baudrate_);
@@ -130,12 +130,20 @@ bool ReadWriteNodeAX12A::onSetPosition(const uint8_t id, const uint16_t goal) {
 
 void ReadWriteNodeAX12A::onSetMultiPosition(const SetMultiPosition::SharedPtr msg)
 {
+
+  if (!msg->torque_enable) {
+    for (auto id : dxl_ids_) {
+      enableTorque(id, false);
+    }
+  } 
+  else {
   dxl_ids_ = msg->ids;
   goal_positions_ = msg->positions;
   RCLCPP_INFO(
     this->get_logger(),
     "Received SetMultiPosition for %zu motors",
     dxl_ids_.size());
+
   if (dxl_ids_.size() != goal_positions_.size()) {
     RCLCPP_WARN(this->get_logger(),
                 "Mismatched id and position array sizes: %zu vs %zu",
@@ -147,6 +155,12 @@ void ReadWriteNodeAX12A::onSetMultiPosition(const SetMultiPosition::SharedPtr ms
     uint8_t id = static_cast<uint8_t>(dxl_ids_[i]);
     int pos = static_cast<int>(goal_positions_[i]);
     pos = std::clamp<int>(pos, 0, 1023);  
+
+    if(id==3 || id==5) {
+      pos = 1023 - pos;
+    }
+    else
+    {pos = pos;}
     const uint16_t goal = static_cast<uint16_t>(pos);
 
     int dxl_comm_result = onSetPosition(id, goal);
@@ -156,12 +170,8 @@ void ReadWriteNodeAX12A::onSetMultiPosition(const SetMultiPosition::SharedPtr ms
                   id, packet_handler_->getTxRxResult(dxl_comm_result));
     }
   }
-
-  if (!msg->torque_enable) {
-	for (auto id : dxl_ids_) {
-	  enableTorque(id, false);
-	}
   }
+
 }
 // ============ Enable/disable torque ============
 bool ReadWriteNodeAX12A::enableTorque(uint8_t id, bool enable) {

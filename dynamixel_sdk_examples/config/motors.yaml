@@ -11,11 +11,11 @@ dynamixel_sdk_examples:
       bounds<>: [0, 1000000]
   ids:
     type: int_array
-    default_value: [1, 2]
+    default_value: [1, 2, 3, 4, 5, 6, 7, 8]
     description: "List of motor IDs to communicate with"
   joint_names:
     type: string_array
-    default_value: ["joint_1", "joint_2"]
+    default_value: ["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "joint_7", "joint_8"]
     description: "List of joint names corresponding to the motors"
   # motor1:
   #   id:
