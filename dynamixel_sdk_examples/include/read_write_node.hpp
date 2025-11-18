@@ -17,7 +17,9 @@
 
 
 #include "dynamixel_sdk_examples/motors_parameters.hpp"   // ParamListener + params
-
+// AX-12A: about 300 degrees of motion
+constexpr double MIN_RAD = 0.0;
+constexpr double MAX_RAD = 300.0 * M_PI / 180.0;  // ≈ 5.23599 rad
 class ReadWriteNodeAX12A : public rclcpp::Node {
 public:
   using SetPosition = dynamixel_sdk_custom_interfaces::msg::SetPosition;
@@ -46,6 +48,8 @@ private:
   void onSetPosition(const SetPosition::SharedPtr msg);
   bool onSetPosition(const uint8_t id, const uint16_t goal);
   void onSetMultiPosition(const SetMultiPosition::SharedPtr msg);
+  void onSetMultiPosition(const std::vector<double>& positions_rad);
+  void setOneMotorTicks(uint8_t id, int pos, int mirror_pos);
   void pollAndPublishJointState();
   // ---- Dynamixel helpers
   bool enableTorque(uint8_t id, bool enable);

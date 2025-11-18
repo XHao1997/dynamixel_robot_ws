@@ -133,17 +133,105 @@ bool ReadWriteNodeAX12A::onSetPosition(const uint8_t id, const uint16_t goal) {
 	return dxl_comm_result;
 }
 
+// Inside your class:
+void ReadWriteNodeAX12A::onSetMultiPosition(const std::vector<double>& positions_rad)
+{
+  // Assume dxl_ids_ already holds the motor IDs in the same order as positions_rad
+  if (positions_rad.size() != dxl_ids_.size()) {
+    RCLCPP_WARN(this->get_logger(),
+                "Mismatched id and positions_rad sizes: %zu vs %zu",
+                dxl_ids_.size(), positions_rad.size());
+    return;
+  }
+
+  if (positions_rad.empty()) {
+    RCLCPP_WARN(this->get_logger(), "Empty positions_rad in onSetMultiPosition");
+    return;
+  }
+
+  // Lambda: rad -> 0..1023 (clamped)
+  auto rad_to_tick = [](double rad) {
+    constexpr double MIN_R = MIN_RAD;
+    constexpr double MAX_R = MAX_RAD;
+
+    // Clamp radians into valid range
+    rad = std::clamp(rad, MIN_R, MAX_R);
+
+    // Normalize to [0, 1]
+    const double ratio = (rad - MIN_R) / (MAX_R - MIN_R);
+
+    // Scale to [0, 1023]
+    int tick = static_cast<int>(std::lround(ratio * 1023.0));
+    return std::clamp(tick, 0, 1023);
+  };
+
+  // Lambda that handles ONE motor (same idea as before, now from radians)
+  auto set_one_motor = [this, &rad_to_tick](uint8_t id,
+                                            double rad_pos,
+                                            double mirror_rad_pos)
+  {
+    // Convert main position
+    int pos = rad_to_tick(rad_pos);
+
+    // Special case for ID 3 and 5: mirrored motion
+    if (id == 3 || id == 5) {
+      int mirror_tick = rad_to_tick(mirror_rad_pos);
+      pos = 1023 - mirror_tick;
+    }
+
+    const uint16_t goal = static_cast<uint16_t>(pos);
+
+    int dxl_comm_result = onSetPosition(id, goal);
+    if (dxl_comm_result != COMM_SUCCESS) {
+      RCLCPP_WARN(this->get_logger(),
+                  "TX/RX failed for ID:%u (%s)",
+                  id, packet_handler_->getTxRxResult(dxl_comm_result));
+    }
+  };
+
+  // Loop over all joints and call the lambda
+  for (size_t i = 0; i < dxl_ids_.size(); ++i) {
+    uint8_t id = static_cast<uint8_t>(dxl_ids_[i]);
+    double rad_pos = positions_rad[i];
+
+    double mirror_rad = rad_pos;
+    this->setOneMotorTicks(id, rad_pos, mirror_rad);
+  }
+}
+
+
+void ReadWriteNodeAX12A::setOneMotorTicks(uint8_t id, int pos, int mirror_pos)
+{
+  int clamped_pos = std::clamp(pos, 0, 1023);
+
+  if (id == 3 || id == 5) {
+    clamped_pos = 1023 - std::clamp(mirror_pos, 0, 1023);
+  }
+
+  const uint16_t goal = static_cast<uint16_t>(clamped_pos);
+
+  int dxl_comm_result = this->onSetPosition(id, goal);
+  if (dxl_comm_result != COMM_SUCCESS) {
+    RCLCPP_WARN(this->get_logger(),
+                "TX/RX failed for ID:%u (%s)",
+                id, packet_handler_->getTxRxResult(dxl_comm_result));
+  }
+}
+
 void ReadWriteNodeAX12A::onSetMultiPosition(const SetMultiPosition::SharedPtr msg)
 {
-
+  // 1) Handle torque disable case
   if (!msg->torque_enable) {
-    for (auto id : dxl_ids_) {
-      enableTorque(id, false);
-    }
-  } 
-  else {
-  dxl_ids_ = msg->ids;
+    std::for_each(dxl_ids_.begin(), dxl_ids_.end(),
+                  [this](int id) {
+                    enableTorque(static_cast<uint8_t>(id), false);
+                  });
+    return;
+  }
+  // 2) Copy msg data into member variables (if you really need them as members)
+  dxl_ids_        = msg->ids;
   goal_positions_ = msg->positions;
+
   RCLCPP_INFO(
     this->get_logger(),
     "Received SetMultiPosition for %zu motors",
@@ -155,32 +243,21 @@ void ReadWriteNodeAX12A::onSetMultiPosition(const SetMultiPosition::SharedPtr ms
                 dxl_ids_.size(), goal_positions_.size());
     return;
   }
-  if (dxl_ids_.empty() || goal_positions_.empty()) {
+
+  if (dxl_ids_.empty()) {
     RCLCPP_WARN(this->get_logger(), "Empty id array in SetMultiPosition");
     return;
   }
+
   for (size_t i = 0; i < dxl_ids_.size(); ++i) {
-    uint8_t id = static_cast<uint8_t>(dxl_ids_[i]);
-    int pos = static_cast<int>(goal_positions_[i]);
-    pos = std::clamp<int>(pos, 0, 1023);  
+    uint8_t id        = static_cast<uint8_t>(dxl_ids_[i]);
+    int     raw_pos   = static_cast<int>(goal_positions_[i]);
+    int mirror_source = raw_pos;
 
-    if(id==3 || id==5) {
-      pos = 1023 - static_cast<int>(goal_positions_[id-1]);
-    }
-    else
-    {pos = pos;}
-    const uint16_t goal = static_cast<uint16_t>(pos);
-
-    int dxl_comm_result = onSetPosition(id, goal);
-    if (dxl_comm_result != COMM_SUCCESS) {
-      RCLCPP_WARN(this->get_logger(),
-                  "TX/RX failed for ID:%u (%s)",
-                  id, packet_handler_->getTxRxResult(dxl_comm_result));
-    }
+    this->setOneMotorTicks(id, raw_pos, mirror_source);
   }
-  }
-
 }
+
 // ============ Enable/disable torque ============
 bool ReadWriteNodeAX12A::enableTorque(uint8_t id, bool enable) {
   uint8_t dxl_error = 0;
@@ -255,6 +332,14 @@ void ReadWriteNodeAX12A::pollAndPublishJointState() {
 
 
 void ReadWriteNodeAX12A::moveJ(const MoveJoint::SharedPtr msg){
+  RCLCPP_INFO(this->get_logger(), "Received MoveJ command");
+  if (msg->joint_positions.size() != 6) {
+    RCLCPP_WARN_THROTTLE(this->get_logger(),*this->get_clock(), 5000,
+                "Mismatched joint_names and positions array sizes: required 6 but got %zu",
+                msg->joint_positions.size());
+    return;
+  }
+
 
 }
 
