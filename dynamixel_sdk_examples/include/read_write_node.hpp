@@ -14,17 +14,22 @@
 #include "dynamixel_sdk_custom_interfaces/msg/set_position.hpp"
 #include "dynamixel_sdk_custom_interfaces/msg/set_multi_position.hpp"
 #include "dynamixel_sdk_custom_interfaces/msg/move_joint.hpp"
+#include "dynamixel_sdk_custom_interfaces/srv/get_position.hpp"
 
 
 #include "dynamixel_sdk_examples/motors_parameters.hpp"   // ParamListener + params
 // AX-12A: about 300 degrees of motion
-constexpr double MIN_RAD = 0.0;
-constexpr double MAX_RAD = 300.0 * M_PI / 180.0;  // ≈ 5.23599 rad
+// AX-12A: about 300 degrees of motion, symmetric around 0
+constexpr double MAX_ABS_DEG = 150.0;
+constexpr double MIN_RAD = -MAX_ABS_DEG * M_PI / 180.0;  // ≈ -2.618 rad
+constexpr double MAX_RAD =  MAX_ABS_DEG * M_PI / 180.0;  // ≈ +2.618 rad
+
 class ReadWriteNodeAX12A : public rclcpp::Node {
 public:
   using SetPosition = dynamixel_sdk_custom_interfaces::msg::SetPosition;
   using SetMultiPosition = dynamixel_sdk_custom_interfaces::msg::SetMultiPosition;
   using MoveJoint = dynamixel_sdk_custom_interfaces::msg::MoveJoint;
+  using GetPosition = dynamixel_sdk_custom_interfaces::srv::GetPosition;
 
   using milliseconds = std::chrono::milliseconds;
 
@@ -40,21 +45,23 @@ private:
   static constexpr int ADDR_MOVING_SPEED       = 32;  // 2 bytes
   // ---- Helpers
   static inline double ticksToRad(uint16_t ticks) {
-    // 0..1023 ticks -> 0..300 degrees -> radians
-    return (static_cast<double>(ticks) / 1023.0) * (300.0 * M_PI / 180.0);
-  }
+    constexpr double MIN_R = MIN_RAD;
+    constexpr double MAX_R = MAX_RAD;
 
+    double ratio = static_cast<double>(ticks) / 1023.0;  // 0..1
+    return MIN_R + ratio * (MAX_R - MIN_R);
+  }
   // ---- ROS Callbacks
+  void handleGetPosition(const std::shared_ptr<GetPosition::Request>  request, std::shared_ptr<GetPosition::Response> response);  
   void onSetPosition(const SetPosition::SharedPtr msg);
   bool onSetPosition(const uint8_t id, const uint16_t goal);
   void onSetMultiPosition(const SetMultiPosition::SharedPtr msg);
   void onSetMultiPosition(const std::vector<double>& positions_rad);
   void setOneMotorTicks(uint8_t id, int pos, int mirror_pos);
-  void pollAndPublishJointState();
   // ---- Dynamixel helpers
   bool enableTorque(uint8_t id, bool enable);
   void moveJ(const MoveJoint::SharedPtr msg);
-  // ---- Parameters / configuration
+  int radToTicks(double rad) const;
   std::string device_name_;
   int baudrate_{57600};
   double poll_rate_hz_{10.0};
@@ -66,13 +73,14 @@ private:
   rclcpp::Subscription<SetPosition>::SharedPtr set_position_sub_;
   rclcpp::Subscription<SetMultiPosition>::SharedPtr set_multi_position_sub_;
   rclcpp::Subscription<MoveJoint>::SharedPtr moveJ_sub_;
+  rclcpp::Service<GetPosition>::SharedPtr get_position_srv_;
 
 
-
-  rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   // ---- Dynamixel SDK handlers (per instance)
   dynamixel::PortHandler*   port_handler_{nullptr};
   dynamixel::PacketHandler* packet_handler_{nullptr};
+  std::unique_ptr<dynamixel::GroupSyncWrite> group_sync_write_;
+
 };

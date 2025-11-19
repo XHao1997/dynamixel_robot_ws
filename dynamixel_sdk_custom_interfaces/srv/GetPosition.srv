@@ -1,6 +1,6 @@
 # Constants
 # Request
-uint8 id
+int16 id
 ---
 # Response
-int32 position
+float32[] positions

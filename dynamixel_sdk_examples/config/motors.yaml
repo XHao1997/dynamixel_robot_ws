@@ -5,10 +5,10 @@ dynamixel_sdk_examples:
     description: "Device name for the motor communication"
   baudrate:
     type: int
-    default_value: 1000000
+    default_value: 2000000
     description: "Baudrate for the motor communication"
     validation:
-      bounds<>: [0, 1000000]
+      bounds<>: [0, 2000000]
   ids:
     type: int_array
     default_value: [1, 2, 3, 4, 5, 6, 7, 8]
