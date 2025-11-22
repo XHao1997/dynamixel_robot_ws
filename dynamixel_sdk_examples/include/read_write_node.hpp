@@ -15,7 +15,7 @@
 #include "dynamixel_sdk_custom_interfaces/msg/set_multi_position.hpp"
 #include "dynamixel_sdk_custom_interfaces/msg/move_joint.hpp"
 #include "dynamixel_sdk_custom_interfaces/srv/get_position.hpp"
-
+#include "std_msgs/msg/int32.hpp"
 
 #include "dynamixel_sdk_examples/motors_parameters.hpp"   // ParamListener + params
 // AX-12A: about 300 degrees of motion
@@ -23,6 +23,7 @@
 constexpr double MAX_ABS_DEG = 150.0;
 constexpr double MIN_RAD = -MAX_ABS_DEG * M_PI / 180.0;  // ≈ -2.618 rad
 constexpr double MAX_RAD =  MAX_ABS_DEG * M_PI / 180.0;  // ≈ +2.618 rad
+constexpr double JOINT3_OFFSET =  M_PI / 2;  // ≈ +1.5708 rad
 
 class ReadWriteNodeAX12A : public rclcpp::Node {
 public:
@@ -54,7 +55,7 @@ private:
   // ---- ROS Callbacks
   void handleGetPosition(const std::shared_ptr<GetPosition::Request>  request, std::shared_ptr<GetPosition::Response> response);  
   void onSetPosition(const SetPosition::SharedPtr msg);
-  bool onSetPosition(const uint8_t id, const uint16_t goal);
+  bool onSetPosition(const uint8_t id, const double goal, bool if_rad=true);
   void onSetMultiPosition(const SetMultiPosition::SharedPtr msg);
   void onSetMultiPosition(const std::vector<double>& positions_rad);
   void setOneMotorTicks(uint8_t id, int pos, int mirror_pos);
@@ -74,7 +75,7 @@ private:
   rclcpp::Subscription<SetMultiPosition>::SharedPtr set_multi_position_sub_;
   rclcpp::Subscription<MoveJoint>::SharedPtr moveJ_sub_;
   rclcpp::Service<GetPosition>::SharedPtr get_position_srv_;
-
+  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr set_torque_sub_;
 
   rclcpp::TimerBase::SharedPtr timer_;
 

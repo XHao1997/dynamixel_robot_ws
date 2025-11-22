@@ -19,7 +19,7 @@ ReadWriteNodeAX12A::ReadWriteNodeAX12A()
   dxl_ids_     = std::vector<uint8_t>(cfg.ids.begin(), cfg.ids.end());
   joint_names_ = cfg.joint_names;
 
-  poll_rate_hz_ = this->declare_parameter<double>("poll_rate_hz", 0.5);
+  // poll_rate_hz_ = this->declare_parameter<double>("poll_rate_hz", 0.5);
   const int qos_depth = this->declare_parameter<int>("qos_depth", 1);
 
   RCLCPP_INFO(this->get_logger(), "Device: %s  Baud: %d", device_name_.c_str(), baudrate_);
@@ -60,6 +60,8 @@ ReadWriteNodeAX12A::ReadWriteNodeAX12A()
 
   // ---- Enable torque on all IDs
   for (auto id : dxl_ids_) {
+    uint8_t dxl_error;
+    packet_handler_->write2ByteTxRx(port_handler_, id, ADDR_MOVING_SPEED, 200, &dxl_error);
     if (!enableTorque(id, true)) {
       throw std::runtime_error("Torque enable failed");
     }
@@ -92,6 +94,28 @@ ReadWriteNodeAX12A::ReadWriteNodeAX12A()
     [this](const MoveJoint::SharedPtr msg) { this->moveJ(msg); }
   );
 
+    set_torque_sub_ = this->create_subscription<std_msgs::msg::Int32>(
+    "set_torque", qos,
+    [this](const std_msgs::msg::Int32::SharedPtr msg)
+    {
+      if (msg->data == 0) {
+        RCLCPP_WARN(this->get_logger(), "/set_torque==0, disabling torque on all motors.");
+        for (auto id : dxl_ids_) {
+          (void)enableTorque(static_cast<uint8_t>(id), false);
+        }
+      } 
+      else if (msg->data == 1)
+      {
+        for (auto id : dxl_ids_) {
+          (void)enableTorque(static_cast<uint8_t>(id), true);
+        }
+       {
+        RCLCPP_DEBUG(this->get_logger(),
+          "Received /set_torque: %d (ignored; only 0 disables torque)", msg->data);
+      }
+    }
+  }
+  );
   RCLCPP_INFO(get_logger(), "read_write_node_ax12a started.");
 }
 
@@ -151,19 +175,32 @@ void ReadWriteNodeAX12A::handleGetPosition(
     response->positions.reserve(dxl_ids_.size());
     for (uint8_t id : dxl_ids_) {
       uint16_t pos = read_one(id);
-      response->positions.push_back(ticksToRad(pos));
-    }
+      if (id!=3 && id!=5){
+          if (id==4){
+              response->positions.push_back(ticksToRad(pos)-JOINT3_OFFSET);
+
+          }else{
+          response->positions.push_back(ticksToRad(pos));
+      }
+      sleep(0.01);
+    }}
 
     RCLCPP_DEBUG(
       this->get_logger(),
       "GetPosition: all joints -> %zu values",
       response->positions.size());
   } else {
-    // 单个 ID
     uint8_t id = static_cast<uint8_t>(req_id);  // 这里才转成 uint8_t
     uint16_t pos = read_one(id);
     response->positions.push_back(ticksToRad(static_cast<uint16_t>(pos)));
-
+    if (id==4){
+        response->positions[0]=response->positions[0]-JOINT3_OFFSET;
+    }
+    else if (id==5)
+    {
+       response->positions[0]=response->positions[0]+JOINT3_OFFSET;
+    }
+    
     RCLCPP_DEBUG(
       this->get_logger(),
       "GetPosition: ID:%u -> %f",
@@ -179,11 +216,11 @@ void ReadWriteNodeAX12A::onSetPosition(const SetPosition::SharedPtr msg) {
 
   uint8_t dxl_error = 0;
   // Clamp the integer position field to the valid range
-  int pos = static_cast<int>(msg->position);
-  pos = std::clamp(pos, 0, 1023);
-  const uint16_t goal = static_cast<uint16_t>(pos);
-
-  int dxl_comm_result = onSetPosition(id, goal);
+  // int pos = static_cast<int>(msg->position);
+  // pos = std::clamp(pos, 0, 1023);
+  // const uint16_t goal = static_cast<uint16_t>(pos);
+  
+  int dxl_comm_result = onSetPosition(id, msg->position, msg->if_rad);
 
   if (dxl_comm_result != COMM_SUCCESS) {
     RCLCPP_WARN(this->get_logger(), "TX/RX failed: %s",
@@ -192,19 +229,66 @@ void ReadWriteNodeAX12A::onSetPosition(const SetPosition::SharedPtr msg) {
     RCLCPP_WARN(this->get_logger(), "DXL error: %s",
                 packet_handler_->getRxPacketError(dxl_error));
   } else {
-    RCLCPP_DEBUG(this->get_logger(), "Set [ID:%u] Goal Position: %u", id, goal);
+    RCLCPP_DEBUG(this->get_logger(), "Set [ID:%u] Goal Position: %u", id, msg->position);
   }	
 }
 
-bool ReadWriteNodeAX12A::onSetPosition(const uint8_t id, const uint16_t goal) {
-	uint8_t dxl_error = 0;
-  RCLCPP_INFO(
-    this->get_logger(),
-    "Setting ID:%u Goal Position: %u",
-    id, goal);
-	packet_handler_->write2ByteTxRx(port_handler_, id, ADDR_MOVING_SPEED, 200, &dxl_error);
-	int dxl_comm_result = packet_handler_->write2ByteTxRx(
-		port_handler_, id, ADDR_GOAL_POSITION, goal, &dxl_error);
+bool ReadWriteNodeAX12A::onSetPosition(const uint8_t id, const double goal,  bool if_rad) {
+	int   dxl_comm_result;
+  if (if_rad == false)
+  {
+    uint8_t dxl_error = 0;
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Setting ID:%u Goal Position: %u",
+      id, goal);
+    // packet_handler_->write2ByteTxRx(port_handler_, id, ADDR_MOVING_SPEED, 200, &dxl_error);
+      dxl_comm_result = packet_handler_->write2ByteTxRx(
+      port_handler_, id, ADDR_GOAL_POSITION, goal, &dxl_error);
+  }
+  else
+  {
+    uint16_t goal_ticks = radToTicks(static_cast<double>(goal));
+    uint8_t dxl_error = 0;
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Setting ID:%u Goal Position (rad): %f -> ticks: %f",
+      id, goal, goal_ticks);
+    if (id==2)
+    {
+      uint16_t goal_ticks_mirror = radToTicks(-static_cast<double>(goal));
+      dxl_comm_result = packet_handler_->write2ByteTxRx(
+      port_handler_, id, ADDR_GOAL_POSITION, goal_ticks, &dxl_error);
+      dxl_comm_result = packet_handler_->write2ByteTxRx(
+      port_handler_, id+1, ADDR_GOAL_POSITION, goal_ticks_mirror, &dxl_error);
+
+    }
+    else if (id==3)
+    {
+      double goal_new = goal + JOINT3_OFFSET;
+      RCLCPP_DEBUG(
+      this->get_logger(),
+      "Mirroring for ID 3 with offset: %f -> %f",
+      goal, goal_new);
+      uint16_t goal_ticks = radToTicks(static_cast<double>(goal_new));
+      uint16_t goal_ticks_mirror = radToTicks(-static_cast<double>(goal_new));
+      dxl_comm_result = packet_handler_->write2ByteTxRx(
+      port_handler_, id+1, ADDR_GOAL_POSITION, goal_ticks, &dxl_error);
+      dxl_comm_result = packet_handler_->write2ByteTxRx(
+      port_handler_, id+2, ADDR_GOAL_POSITION, goal_ticks_mirror, &dxl_error);
+    }
+    else
+    {
+      RCLCPP_INFO(
+      this->get_logger(),
+      "Setting ID:%u Goal Position: %u",
+      id, goal_ticks);
+          // packet_handler_->write2ByteTxRx(port_handler_, id, ADDR_MOVING_SPEED, 200, &dxl_error);
+      dxl_comm_result = packet_handler_->write2ByteTxRx(
+      port_handler_, id, ADDR_GOAL_POSITION, goal_ticks, &dxl_error);
+    }
+  }
+
 	return dxl_comm_result;
 }
 
@@ -229,7 +313,6 @@ void ReadWriteNodeAX12A::onSetMultiPosition(const std::vector<double>& positions
   for (size_t i = 0; i < dxl_ids_.size(); ++i) {
     uint8_t id = static_cast<uint8_t>(dxl_ids_[i]);
     double rad_pos = positions_rad[i];
-
     double mirror_rad = rad_pos;
     this->setOneMotorTicks(id, rad_pos, mirror_rad);
   }
@@ -327,43 +410,42 @@ void ReadWriteNodeAX12A::moveJ(const MoveJoint::SharedPtr msg)
     return;
   }
 
-  if (msg->joint_positions.size() != dxl_ids_.size()) {
+  if (msg->joint_positions.size() != 6)  {
     RCLCPP_WARN_THROTTLE(
       this->get_logger(), *this->get_clock(), 5000,
-      "Mismatched joint count: expected %zu, got %zu",
-      dxl_ids_.size(), msg->joint_positions.size());
+      "Mismatched joint count: expected 6, got %zu", msg->joint_positions.size());
     return;
   }
 
   // 0) convert all radians -> ticks
-  std::vector<int> ticks(dxl_ids_.size());
-  for (size_t i = 0; i < dxl_ids_.size(); ++i) {
-    double rad = msg->joint_positions[i];
-    ticks[i] = radToTicks(rad);   // <- make sure this matches your function name
-  }
-
-  // 1) find indices of IDs 2,3,4,5 in dxl_ids_
-  auto find_index = [this](uint8_t target_id) -> int {
-    for (size_t i = 0; i < dxl_ids_.size(); ++i) {
-      if (dxl_ids_[i] == target_id) {
-        return static_cast<int>(i);
-      }
+  std::vector<int> ticks;
+  for (size_t i = 0; i < msg->joint_positions.size(); ++i) {
+    double rad;
+    rad = msg->joint_positions[i];
+    if (i == 2) {
+      // For IDs 3 and 5, mirror the position
+      rad = rad+JOINT3_OFFSET;
     }
-    return -1;
-  };
 
-  int idx2 = find_index(2);
-  int idx3 = find_index(3);
-  int idx4 = find_index(4);
-  int idx5 = find_index(5);
+    ticks.push_back(radToTicks(rad)); 
 
-  // 2) apply mirroring: 3 is mirror of 2, 5 is mirror of 4
-  if (idx2 >= 0 && idx3 >= 0) {
-    ticks[idx3] = 1023 - ticks[idx2];
+    if(i == 1 || i == 2) {
+      // For IDs 3 and 5, mirror the position
+      ticks.push_back(radToTicks(-rad)); 
+      
+    }
+    
   }
-
-  if (idx4 >= 0 && idx5 >= 0) {
-    ticks[idx5] = 1023 - ticks[idx4];
+  // 2) log ticks for debugging
+  RCLCPP_INFO(this->get_logger(), "Converted ticks:");
+  for (size_t i = 0; i < dxl_ids_.size() && i < ticks.size(); ++i) {
+    RCLCPP_INFO(this->get_logger(), "  ID:%u -> ticks:%d",
+                static_cast<unsigned int>(dxl_ids_[i]), ticks[i]);
+  }
+  if (ticks.size() != dxl_ids_.size()) {
+    RCLCPP_WARN(this->get_logger(),
+                "ticks vector size (%zu) != dxl_ids_ size (%zu)",
+                ticks.size(), dxl_ids_.size());
   }
 
   // 3) pack into GroupSyncWrite
